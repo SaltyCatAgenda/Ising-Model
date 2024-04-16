@@ -6,13 +6,14 @@ open Plotly.NET
 
 let rng = Random.shared
 let buildLattice n = Array2D.init n n (fun _ _ ->  float (2 * rng.Next(2) - 1))
+let coldStart n = Array2D.create n n 1.0
 
 let magnetization (lattice: float array2d) :float = 
     let length = 
          (lattice |> Array2D.length1)
     let r = 
         Seq.init length (fun i -> lattice.[i,*] |> Array.sum)
-    abs(float (r |> Seq.sum) / (float length**2))
+    abs(float (r |> Seq.sum) / ( (float length)**2) )
 
 let Energy lattice : float= 
     let mutable energy  = 0.0
@@ -20,7 +21,7 @@ let Energy lattice : float=
     let eVec vec = vec |> Seq.pairwise|>Seq.map (fun (a,b) -> a*b)|> Seq.sum
     for n = 0 to length-1 do
         energy <- energy + (eVec lattice.[n,*]) + (eVec lattice.[*,n])
-    (-1.0) * energy
+    (-1.0) * energy/900.0
 
 let pointEnergy lattice location :float =
     let (a,b) = location
@@ -52,12 +53,12 @@ let mcmc (lat: float array2d) (beta:float) (nflips:int) (tsteps:int) : float arr
     for step=0 to tsteps-1 do
         for flip=0 to nflips-1 do
             let flip_i,flip_j = (rng.Next(length), rng.Next(length))
-            let flip_dE = pointEnergy lattice (flip_i,flip_j)
-            if exp (-beta * (float flip_dE) ) > rng.NextDouble() then
+            let flip_dE = float (pointEnergy lattice (flip_i,flip_j))
+            if exp (-beta *  flip_dE ) > rng.NextDouble() then
                 energy <- energy + flip_dE
                 lattice.[flip_i,flip_j] <- -1.0*lattice.[flip_i,flip_j]
         
-        av_energy[step] <- energy/(float length**2)
+        av_energy[step] <- energy/(float length)**2
         av_mag[step] <- (lattice |> magnetization)
     (av_energy,av_mag)
 
@@ -66,10 +67,11 @@ let lat20 = buildLattice 20
 let timer = new System.Diagnostics.Stopwatch()
 timer.Start()
 //let e1,m1 = mcmc lat20 0.6 100000 20
-let e1,m1 = mcmc (30|>buildLattice) 0.6 100000 20
+let e1,m1 = mcmc (30|>buildLattice) 0.7 (int (10.0**4)) 1000
+//let e1,m1 = mcmc (30|>coldStart) 0.6 100000 200
 printfn "MCMC took %i milliseconds" timer.ElapsedMilliseconds
 
-let mc_tlist = [1..1..20]
+let mc_tlist = [1..1..1000]
 
 let ePlot = 
     Chart.Point(x=mc_tlist , y=e1)
@@ -83,18 +85,26 @@ let mPlot =
     |> Chart.withXAxisStyle (TitleText = "Sample step")
     |> Chart.show
 
+let mHist =
+    Chart.Histogram(Y=m1, NBinsY = 100)
+    |> Chart.withYAxisStyle (TitleText = "Magnetization ", MinMax=(0,1))
+    |> Chart.withXAxisStyle (TitleText = "Counts")
+    |> Chart.show
+
 let EvsT, MvsT, ChivsT = 
-    let lattice = 30|> buildLattice
+    //let lattice = 30|> buildLattice // hot start
+    let lattice = 30 |> coldStart
     let bList = [0.2..0.01..0.6]
     let length = bList |> List.length
     let eList = Array.zeroCreate length
     let mList = Array.zeroCreate length
     let chiList = Array.zeroCreate length
     for i=0 to (length-1) do        
-        let e1,m1 = (mcmc(lattice) bList.[i] 100000 2000)
-        eList.[i] <- e1|>Array.last
-        mList.[i] <- m1|>Array.last   
-        chiList.[i] <- abs((mList.[i]) - (m1 |> Array.average) )
+        let e1,m1 = (mcmc(lattice) bList.[i] 10000 1000)
+        eList.[i] <- e1|>Array.average
+        mList.[i] <- m1|>Array.average  
+        chiList.[i] <- ((m1|>Array.map (fun mag -> mag**2)|> Array.average) - (mList.[i])**2)
+                          
     eList,mList,chiList    
 
 let etPlot = 
